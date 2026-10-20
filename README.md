@@ -6,33 +6,59 @@ Unofficial Go client for the EcoFlow **Power Ocean Plus** home battery
 It connects to the EcoFlow cloud MQTT API and live-streams energy telemetry:
 battery SOC and power, PV (per-string MPPT + PV inverter), house load, and grid
 power — the same values as the official app's dashboard, at the same cadence.
-Usable as a library (`import powerocean "github.com/mpollmeier/ecoflow-powerocean-plus-client"`) or via
-the included console client.
+Primary use is as a third-party library; a console client is included.
 
 **Not affiliated with, endorsed by, or supported by EcoFlow.** Use at your own
 risk.
 
+## Install
+
+```bash
+go get github.com/mpollmeier/ecoflow-powerocean-plus-client
+```
+
 ## Library usage
 
-```go
-import powerocean "github.com/mpollmeier/ecoflow-powerocean-plus-client"
+The package name is `powerocean`. Create a client with `powerocean.New`, then
+run it with a context — `Run` blocks and delivers a `Report` to your callback
+until the context is cancelled:
 
-client, err := powerocean.New(powerocean.Config{
-    Email:    "you@example.com",
-    Password: "your password", // handled as UTF-8, then base64, like the app
-    DeviceSN: "R37…",          // device serial
-    // StreamSwitch: true,    // the one write — see the warning above; default off
-    OnReport: func(r powerocean.Report) { fmt.Print(r) },
-})
-if err != nil {
-    return err
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os/signal"
+	"syscall"
+
+	powerocean "github.com/mpollmeier/ecoflow-powerocean-plus-client"
+)
+
+func main() {
+	client, err := powerocean.New(powerocean.Config{
+		Email:    "you@example.com",
+		Password: "your password", // sent as base64(UTF-8), like the official app
+		DeviceSN: "R37…",          // device serial
+		// StreamSwitch: true,    // the one write — see the note below; default off
+		OnReport: func(r powerocean.Report) { fmt.Print(r) },
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT)
+	defer stop()
+	if err := client.Run(ctx); err != nil {
+		panic(err)
+	}
 }
-return client.Run(ctx) // blocks until ctx is cancelled
 ```
 
 `Report` carries battery SOC (system + per-pack), battery/solar/load/grid
 watts, and a `Derived` flag (see wire-format notes below). The zero config is
-strictly read-only; `StreamSwitch: true` opts into the stream keepalive write.
+strictly read-only; `StreamSwitch: true` opts into the stream keepalive write
+([what that write does](#note-the-client-sends-one-write-command)).
 
 ## Console client
 
@@ -115,7 +141,7 @@ Everything rides MQTT as `Common.Send_Header_Msg` protobuf — a list of
 is the command-specific protobuf (`enc_type=1` payloads are XOR-obfuscated with
 `(byte)seq` and decoded transparently). Dispatch is by `cmd_func`/`cmd_id`
 (EMS = 96). Note that `EnergyStreamReport`s arriving in `get_reply` are the
-device's **cached** snapshot — the reader ignores those and uses the live push
+device's **cached** snapshot — the client ignores those and uses the live push
 sources above; system SOC is capacity-weighted from the individual packs, and
 `load` is derived as `solar + grid − battery`.
 
@@ -136,22 +162,22 @@ protoc -I . --go_out=. --go_opt=module=github.com/mpollmeier/ecoflow-powerocean-
   proto/Common.proto proto/jt_s1_cmd.proto proto/jt_s1_sys.proto
 ```
 
-## Note: the reader sends one write command
+## Note: the client sends one write command
 
-By default the reader publishes `ENERGY_STREAM_SWITCH = 1` (a **set** command)
-every 10 seconds. This is the same command the official app sends whenever its
-dashboard is open: it opens the telemetry *reporting stream*, which makes the
-device push `EnergyStreamReport` every few seconds instead of its default
-~30–60 s cadence. It does **not** touch any power-flow, charge, or inverter
-setting — only how often the device reports.
+With `Config.StreamSwitch: true` (the console client's default), the client
+publishes `ENERGY_STREAM_SWITCH = 1` (a **set** command) every 10 seconds. This
+is the same command the official app sends whenever its dashboard is open: it
+opens the telemetry *reporting stream*, which makes the device push
+`EnergyStreamReport` every few seconds instead of its default ~30–60 s cadence.
+It does **not** touch any power-flow, charge, or inverter setting — only how
+often the device reports.
 
-- `ECOFLOW_STREAM=0` disables even this. The reader then only **subscribes** and
-  sends a single read-only "fetch all" *get* at connect time (plus one per
-  reconnect), and telemetry arrives at the device's slower natural cadence.
+- Leave `StreamSwitch` false (the library default) for a strictly read-only
+  client: it then only **subscribes** and sends a single read-only "fetch all"
+  *get* at connect time (plus one per reconnect), and telemetry arrives at the
+  device's slower natural cadence. Console equivalent: `ECOFLOW_STREAM=0`.
 - No other write commands are ever sent (no charge/discharge limits, no
   work-mode changes, no reset — nothing else).
-
-If you want a strictly read-only tool, run with `ECOFLOW_STREAM=0`.
 
 ## Legal note
 
