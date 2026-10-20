@@ -1,11 +1,12 @@
-package main
+package powerocean
 
 import (
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
-	"reader/pb"
+	"github.com/mpollmeier/powerocean-client/pb"
 )
 
 // decodeEnvelope parses a raw MQTT payload as Send_Header_Msg and returns its
@@ -100,4 +101,44 @@ func parseHeartbeat(h *pb.Header) (*pb.HeartbeatReport, error) {
 		return nil, fmt.Errorf("HeartbeatReport: %w", err)
 	}
 	return &r, nil
+}
+
+// reportFromESR converts a full system sample to a Report.
+func reportFromESR(r *pb.EnergyStreamReport, at time.Time) Report {
+	return Report{
+		Time:         at,
+		BatterySOC:   r.GetBpSoc(),
+		HasSOC:       true,
+		BatteryW:     r.GetBpPwr(),
+		SolarMPPT:    r.GetMpptPwr(),
+		SolarPV1:     r.GetPv1Pwr(),
+		SolarPV2:     r.GetPv2Pwr(),
+		SolarPV3:     r.GetPv3Pwr(),
+		SolarPVInv:   r.GetPvInvPwr(),
+		SolarOtherPV: r.GetOtherPvPwr(),
+		LoadW:        r.GetSysLoadPwr(),
+		GridW:        r.GetSysGridPwr(),
+	}
+}
+
+// reportFromItem converts a timestamped detail sample to a Report.
+func reportFromItem(it *pb.EnergyStreamItem) Report {
+	at := time.Now()
+	if ts := it.GetTimestamp(); ts > 0 {
+		at = time.Unix(int64(ts), 0)
+	}
+	return Report{
+		Time:         at,
+		BatterySOC:   it.GetBpSoc(),
+		HasSOC:       true,
+		BatteryW:     it.GetBpPwr(),
+		SolarMPPT:    it.GetMpptPwr(),
+		SolarPV1:     it.GetPv1Pwr(),
+		SolarPV2:     it.GetPv2Pwr(),
+		SolarPV3:     it.GetPv3Pwr(),
+		SolarPVInv:   it.GetPvInvPwr(),
+		SolarOtherPV: it.GetOtherPvPwr(),
+		LoadW:        it.GetLoadPwr(),
+		GridW:        it.GetGridPwr(),
+	}
 }

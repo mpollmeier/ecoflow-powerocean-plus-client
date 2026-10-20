@@ -1,4 +1,4 @@
-package main
+package powerocean
 
 import (
 	"encoding/hex"
@@ -7,14 +7,11 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"reader/pb"
+	"github.com/mpollmeier/powerocean-client/pb"
 )
 
 func TestLiveStateDerivesFromHeartbeats(t *testing.T) {
-	var printed []*report
-	state := newLiveState("R371TEST", func(r *report, _ []packInfo) {
-		printed = append(printed, r)
-	})
+	state := newLiveState("R371TEST", func(Report) {})
 	state.ingestHeartbeat(&pb.HeartbeatReport{
 		EmsBpPower:     proto.Float32(-500), // discharging 500 W
 		EmsPvInvPwr:    proto.Float32(100),
@@ -26,69 +23,109 @@ func TestLiveStateDerivesFromHeartbeats(t *testing.T) {
 		{BpSn: []byte("packB"), BpSoc: proto.Uint32(82), BpRealSoc: proto.Float32(82), BpPwr: proto.Float32(-250), BpFullCap: proto.Uint32(97000)},
 	})
 
-	r, packs, ok := state.snapshot()
+	r, ok := state.snapshot()
 	if !ok {
 		t.Fatal("no snapshot")
 	}
-	if !r.derived {
+	if !r.Derived {
 		t.Error("expected derived snapshot")
 	}
-	if r.batteryW != -500 {
-		t.Errorf("battery: got %v, want -500", r.batteryW)
+	if r.BatteryW != -500 {
+		t.Errorf("battery: got %v, want -500", r.BatteryW)
 	}
-	if r.gridW != -6 {
-		t.Errorf("grid: got %v, want -6 (meter total)", r.gridW)
+	if r.GridW != -6 {
+		t.Errorf("grid: got %v, want -6 (meter total)", r.GridW)
 	}
-	if r.solarMPPT != 600 { // 200+300 strings + 100 PV inv
-		t.Errorf("solar: got %v, want 600", r.solarMPPT)
+	if r.SolarMPPT != 600 { // 200+300 strings + 100 PV inv
+		t.Errorf("solar: got %v, want 600", r.SolarMPPT)
 	}
 	// load = solar + grid - battery = 600 + (-6) - (-500) = 1094
-	if r.loadW != 1094 {
-		t.Errorf("load: got %v, want 1094", r.loadW)
+	if r.LoadW != 1094 {
+		t.Errorf("load: got %v, want 1094", r.LoadW)
 	}
-	if got := packSoc(packs); got != 83 { // (84*97 + 82*97) / (97+97) = 83
-		t.Errorf("pack soc: got %d, want 83", got)
+	if !r.HasSOC || r.BatterySOC != 83 {
+		t.Errorf("soc: got %d (has=%v), want 83", r.BatterySOC, r.HasSOC)
 	}
-	if len(packs) != 2 {
-		t.Errorf("packs: got %d, want 2", len(packs))
+	if len(r.Packs) != 2 {
+		t.Errorf("packs: got %d, want 2", len(r.Packs))
 	}
 }
 
 func TestLiveStatePrefersFreshSystemSample(t *testing.T) {
-	state := newLiveState("R371TEST", func(*report, []packInfo) {})
+	state := newLiveState("R371TEST", func(Report) {})
 	state.ingestHeartbeat(&pb.HeartbeatReport{EmsBpPower: proto.Float32(-500)})
-	state.ingestSystem(newReport(&pb.EnergyStreamReport{BpSoc: 77, BpPwr: -300}), time.Now())
+	state.ingestSystem(reportFromESR(&pb.EnergyStreamReport{BpSoc: 77, BpPwr: -300}, time.Now()), time.Now())
 
-	r, _, ok := state.snapshot()
+	r, ok := state.snapshot()
 	if !ok {
 		t.Fatal("no snapshot")
 	}
-	if r.derived {
+	if r.Derived {
 		t.Error("fresh system sample must not be derived")
 	}
-	if r.batterySOC != 77 {
-		t.Errorf("soc: got %d, want 77 (system sample)", r.batterySOC)
+	if r.BatterySOC != 77 {
+		t.Errorf("soc: got %d, want 77 (system sample)", r.BatterySOC)
 	}
 }
 
 func TestLiveStateIgnoresStaleSystemSample(t *testing.T) {
-	state := newLiveState("R371TEST", func(*report, []packInfo) {})
-	state.ingestSystem(newReport(&pb.EnergyStreamReport{BpSoc: 92, BpPwr: -519}), time.Now().Add(-2*time.Hour))
+	state := newLiveState("R371TEST", func(Report) {})
+	stale := reportFromESR(&pb.EnergyStreamReport{BpSoc: 92, BpPwr: -519}, time.Now().Add(-2*time.Hour))
+	state.ingestSystem(stale, time.Now().Add(-2*time.Hour))
 	state.ingestHeartbeat(&pb.HeartbeatReport{EmsBpPower: proto.Float32(-100)})
 
-	r, _, ok := state.snapshot()
+	r, ok := state.snapshot()
 	if !ok {
 		t.Fatal("no snapshot")
 	}
-	if !r.derived {
+	if !r.Derived {
 		t.Error("stale system sample must fall back to live derivation")
 	}
-	if r.batteryW != -100 {
-		t.Errorf("battery: got %v, want -100 (live heartbeat)", r.batteryW)
+	if r.BatteryW != -100 {
+		t.Errorf("battery: got %v, want -100 (live heartbeat)", r.BatteryW)
 	}
 }
 
-func sampleReport() *pb.EnergyStreamReport {
+func TestDebounceCoalescesBurst(t *testing.T) {
+	printed := make(chan Report, 8)
+	state := newLiveState("R371TEST", func(r Report) { printed <- r })
+	state.debounce = 50 * time.Millisecond
+
+	// One fetch-reply burst: heartbeat first, then packs ~ms later.
+	state.ingestHeartbeat(&pb.HeartbeatReport{EmsBpPower: proto.Float32(-500)})
+	state.ingestPacks([]*pb.BpStaReport{
+		{BpSn: []byte("packA"), BpSoc: proto.Uint32(85), BpRealSoc: proto.Float32(84)},
+	})
+
+	select {
+	case r := <-printed:
+		if !r.HasSOC {
+			t.Error("coalesced report must already include SOC (no n/a)")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no report")
+	}
+	select {
+	case r := <-printed:
+		t.Errorf("unexpected second report in same burst: %v", r.BatterySOC)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestPackOrderDeterministic(t *testing.T) {
+	state := newLiveState("R371TEST", func(Report) {})
+	// Insert in map-random order; reports must sort by SN.
+	state.ingestPacks([]*pb.BpStaReport{
+		{BpSn: []byte("packB"), BpSoc: proto.Uint32(82)},
+		{BpSn: []byte("packA"), BpSoc: proto.Uint32(85)},
+	})
+	r, _ := state.snapshot()
+	if len(r.Packs) != 2 || r.Packs[0].SN != "packA" || r.Packs[1].SN != "packB" {
+		t.Errorf("packs not sorted by SN: %+v", r.Packs)
+	}
+}
+
+func sampleESR() *pb.EnergyStreamReport {
 	return &pb.EnergyStreamReport{
 		SysLoadPwr:    2150.5,
 		SysGridPwr:    -800,
@@ -107,7 +144,7 @@ func sampleReport() *pb.EnergyStreamReport {
 // Step 1 acceptance: EnergyStreamReport round-trips through the generated
 // bindings with the wire schema reconstructed from the APK.
 func TestEnergyStreamReportRoundTrip(t *testing.T) {
-	in := sampleReport()
+	in := sampleESR()
 	wire, err := proto.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +159,7 @@ func TestEnergyStreamReportRoundTrip(t *testing.T) {
 }
 
 func TestEnvelopeXORDecode(t *testing.T) {
-	pdata, err := proto.Marshal(sampleReport())
+	pdata, err := proto.Marshal(sampleESR())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,48 +201,33 @@ func TestEnvelopeXORDecode(t *testing.T) {
 	}
 }
 
-func TestDebounceCoalescesBurst(t *testing.T) {
-	printed := make(chan *report, 8)
-	state := newLiveState("R371TEST", func(r *report, _ []packInfo) { printed <- r })
-	state.debounce = 50 * time.Millisecond
-
-	// One fetch-reply burst: heartbeat first, then packs ~ms later.
-	state.ingestHeartbeat(&pb.HeartbeatReport{EmsBpPower: proto.Float32(-500)})
-	state.ingestPacks([]*pb.BpStaReport{
-		{BpSn: []byte("packA"), BpSoc: proto.Uint32(85), BpRealSoc: proto.Float32(84)},
-	})
-
-	select {
-	case r := <-printed:
-		if !r.haveSoc {
-			t.Error("coalesced print must already include SOC (no n/a)")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no print")
-	}
-	select {
-	case r := <-printed:
-		t.Errorf("unexpected second print in same burst: %v", r.batterySOC)
-	case <-time.After(200 * time.Millisecond):
-	}
-}
-
-func TestPackOrderDeterministic(t *testing.T) {
-	state := newLiveState("R371TEST", func(*report, []packInfo) {})
-	// Insert in map-random order; renders must sort by SN.
-	state.ingestPacks([]*pb.BpStaReport{
-		{BpSn: []byte("packB"), BpSoc: proto.Uint32(82)},
-		{BpSn: []byte("packA"), BpSoc: proto.Uint32(85)},
-	})
-	_, packs, _ := state.snapshot()
-	if len(packs) != 2 || packs[0].sn != "packA" || packs[1].sn != "packB" {
-		t.Errorf("packs not sorted by SN: %+v", packs)
-	}
-}
+// The fetch-all must match the app's captured request byte-for-byte
+// (modulo the random seq). The app capture (device_sn omitted, empty sns).
+const capturedFetchAll = "0a1a1020182070ebf7e99002ba0107416e64726f6964d20100da0100"
 
 // The stream switch must match the app's captured set byte-for-byte
-// (modulo the random seq), or the device may not honour it.
+// (modulo the random seq), or the device may not honour it. The capture's
+// device_sn has been replaced with a placeholder of the same length.
 const capturedStreamSwitch = "0a3f0a0208011020186020012801406048615002580170eaf7e990027801800113880101ba0107616e64726f6964ca01105233373153414d504c45444556303031"
+
+func TestFetchAllMatchesAppCapture(t *testing.T) {
+	captured, err := hex.DecodeString(capturedFetchAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, got pb.Send_Header_Msg
+	if err := proto.Unmarshal(captured, &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := proto.Unmarshal(buildFetchAllRequest(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want.GetMsg()[0].Seq = 0
+	got.GetMsg()[0].Seq = 0
+	if !proto.Equal(&want, &got) {
+		t.Errorf("fetch-all mismatch:\n got %v\nwant %v", &got, &want)
+	}
+}
 
 func TestStreamSwitchMatchesAppCapture(t *testing.T) {
 	captured, err := hex.DecodeString(capturedStreamSwitch)

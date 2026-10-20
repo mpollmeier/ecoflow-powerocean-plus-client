@@ -1,23 +1,47 @@
-# EcoFlow Power Ocean Plus — telemetry reader (Go)
+# powerocean-client
 
-Unofficial, independent reader for the **EcoFlow Power Ocean Plus** home battery
-(product type 87, serial prefix `R37`). It connects to the EcoFlow cloud MQTT
-API and live-streams energy telemetry: battery SOC and power, PV (per-string
-MPPT + PV inverter), house load, and grid power — the same values as the
-official app's dashboard, at the same cadence.
+Unofficial Go client for the EcoFlow **Power Ocean Plus** home battery
+(product type 87, serial prefix `R37`).
+
+It connects to the EcoFlow cloud MQTT API and live-streams energy telemetry:
+battery SOC and power, PV (per-string MPPT + PV inverter), house load, and grid
+power — the same values as the official app's dashboard, at the same cadence.
+Usable as a library (`import "github.com/mpollmeier/powerocean-client"`) or via
+the included console client.
 
 **Not affiliated with, endorsed by, or supported by EcoFlow.** Use at your own
 risk.
 
-## Usage
+## Library usage
+
+```go
+import "github.com/mpollmeier/powerocean-client"
+
+client, err := powerocean.New(powerocean.Config{
+    Email:    "you@example.com",
+    Password: "your password", // handled as UTF-8, then base64, like the app
+    DeviceSN: "R37…",          // device serial
+    // StreamSwitch: true,    // the one write — see the warning above; default off
+    OnReport: func(r powerocean.Report) { fmt.Print(r) },
+})
+if err != nil {
+    return err
+}
+return client.Run(ctx) // blocks until ctx is cancelled
+```
+
+`Report` carries battery SOC (system + per-pack), battery/solar/load/grid
+watts, and a `Derived` flag (see wire-format notes below). The zero config is
+strictly read-only; `StreamSwitch: true` opts into the stream keepalive write.
+
+## Console client
 
 ```bash
 export ECOFLOW_EMAIL='you@example.com'
-export ECOFLOW_PASSWORD='your password'   # handled as UTF-8, then base64, like the app
+export ECOFLOW_PASSWORD='your password'
 export ECOFLOW_DEVICE_SN='R37…'           # device serial
 
-cd reader
-go run .
+go run ./cmd/powerocean-client
 ```
 
 Example output (updated every few seconds while the stream switch is on):
@@ -42,14 +66,14 @@ individual battery packs; a `()` suffix shows each pack.
 | Variable | Meaning |
 |---|---|
 | `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`, `ECOFLOW_DEVICE_SN` | required credentials and target device |
-| `ECOFLOW_STREAM=0` | disable the stream-switch write (strictly read-only, slower cadence) |
+| `ECOFLOW_STREAM=0` | disable the stream-switch write (strictly read-only, slower cadence; library equivalent: leave `Config.StreamSwitch` false) |
 | `ECOFLOW_DEBUG=1` | raw payload hex dumps and request sniff logs |
 
 ## Protocol summary
 
 Details and provenance: [`docs/protocol.md`](docs/protocol.md) (wire schema and
 transport findings) and [`docs/auth.md`](docs/auth.md) (login → MQTT
-credentials). Schemas live in [`proto/`](proto/), Go bindings in `reader/pb/`.
+credentials). Schemas live in [`proto/`](proto/), Go bindings in [`pb/`](pb/).
 
 ### Connection flow
 
@@ -98,7 +122,6 @@ sources above; system SOC is capacity-weighted from the individual packs, and
 ## Development
 
 ```bash
-cd reader
 go test ./...        # includes byte-level tests against captured wire frames
 go vet ./...
 ```
@@ -106,10 +129,10 @@ go vet ./...
 Regenerate Go bindings after editing protos:
 
 ```bash
-protoc -I . --go_out=reader --go_opt=module=reader \
-  --go_opt=Mproto/Common.proto=reader/pb \
-  --go_opt=Mproto/jt_s1_cmd.proto=reader/pb \
-  --go_opt=Mproto/jt_s1_sys.proto=reader/pb \
+protoc -I . --go_out=. --go_opt=module=github.com/mpollmeier/powerocean-client \
+  --go_opt=Mproto/Common.proto=github.com/mpollmeier/powerocean-client/pb \
+  --go_opt=Mproto/jt_s1_cmd.proto=github.com/mpollmeier/powerocean-client/pb \
+  --go_opt=Mproto/jt_s1_sys.proto=github.com/mpollmeier/powerocean-client/pb \
   proto/Common.proto proto/jt_s1_cmd.proto proto/jt_s1_sys.proto
 ```
 

@@ -1,4 +1,4 @@
-module reader
+module github.com/mpollmeier/powerocean-client
 
 go 1.25.0
 

@@ -167,7 +167,7 @@ request/response channel (`/app/{userId}/{sn}/thing/property/get` is the device-
 
 ## Step 2 — Transport (largely reverse-engineered; verify live)
 
-1. **Auth flow** — implemented in `reader/auth.go` (Go), documented in `docs/auth.md`:
+1. **Auth flow** — implemented in `auth.go` (Go), documented in `docs/auth.md`:
    - `POST https://api.ecoflow.com/auth/login` (body: email, base64(UTF-8 password), `scene=IOT_APP`,
      `userType=ECOFLOW`) → token + userId.
    - `GET /iot-auth/app/certification?userId=…` (Bearer token) → MQTT broker host/port +
@@ -186,10 +186,10 @@ request/response channel (`/app/{userId}/{sn}/thing/property/get` is the device-
 
 ## Step 3 — Go prototype (`reader/`)
 
-1. Layout: Go module `reader/`:
-   `reader/main.go`, `reader/auth.go`, `reader/envelope.go` (Send_Header_Msg + XOR + dispatch),
-   `reader/fetch.go` (fetch-all get request), `reader/mqtt.go`, `reader/report.go`,
-   `reader/pb/` (generated), `reader/*_test.go`.
+1. Layout: Go module `github.com/mpollmeier/powerocean-client`, library package
+   `powerocean` at the repo root (`client.go`, `auth.go`, `envelope.go`,
+   `state.go`, `report.go`, `mqtt.go`, `request.go`), console client at
+   `cmd/powerocean-client`, generated bindings in `pb/`, tests at the root.
    Config via env: `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`, `ECOFLOW_DEVICE_SN` (secrets stay in env);
    `ECOFLOW_STREAM=0` (disable the cmd-97 stream switch = strictly read-only, 30-60s cadence),
    `ECOFLOW_DEBUG=1` (raw payload dumps + request sniff logs).

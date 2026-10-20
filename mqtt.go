@@ -1,15 +1,20 @@
-package main
+package powerocean
 
 import (
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
+
+// insecureTLSConfig matches the app's client behaviour (no server cert pinning).
+func insecureTLSConfig() *tls.Config {
+	return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // matches app behaviour
+}
 
 // newClientID builds a unique client id in the app's convention.
 func newClientID(userID string) string {
@@ -23,8 +28,7 @@ func devicePropertyTopic(sn string) string {
 	return "/app/device/property/" + sn
 }
 
-// deviceTopics lists the topics carrying Send_Header_Msg telemetry for a device
-// (see plan-reader.md / nv.h message handling in the APK).
+// deviceTopics lists the topics carrying Send_Header_Msg telemetry for a device.
 func deviceTopics(userID, sn string) []string {
 	return []string{
 		devicePropertyTopic(sn),
@@ -45,10 +49,9 @@ func requestTopics(userID, sn string) []string {
 }
 
 // connectAndSubscribe opens the TLS MQTT connection and subscribes to the
-// device's telemetry topics. Read-only: no publishes on any set/request topic
-// except the fetch-all get. It returns once all subscriptions are active, so
-// callers can safely trigger a fetch without racing the subscriptions.
-func connectAndSubscribe(creds mqttCredentials, userID, sn string, state *liveState) (mqtt.Client, error) {
+// device's telemetry topics. It returns once all subscriptions are active, so
+// the caller can trigger a fetch without racing the subscriptions.
+func (c *Client) connectAndSubscribe(creds mqttCredentials, userID, sn string) (mqtt.Client, error) {
 	subscribed := make(chan struct{})
 	var subscribeOnce sync.Once
 	broker := fmt.Sprintf("%s://%s:%s", creds.Protocol, creds.URL, creds.Port)
@@ -61,36 +64,36 @@ func connectAndSubscribe(creds mqttCredentials, userID, sn string, state *liveSt
 		SetConnectTimeout(30 * time.Second).
 		SetAutoReconnect(true).
 		SetTLSConfig(insecureTLSConfig()).
-		SetOnConnectHandler(func(c mqtt.Client) {
-			log.Printf("connected to %s", broker)
+		SetOnConnectHandler(func(cli mqtt.Client) {
+			c.log.Info("connected", "broker", broker)
 			topics := append(deviceTopics(userID, sn), requestTopics(userID, sn)...)
 			for i, topic := range topics {
 				handler := func(_ mqtt.Client, msg mqtt.Message) {
-					handleMessage(msg, state)
+					c.handleMessage(msg)
 				}
 				if i >= len(deviceTopics(userID, sn)) {
 					handler = func(_ mqtt.Client, msg mqtt.Message) {
-						handleRequestMessage(msg)
+						c.handleRequestMessage(msg)
 					}
 				}
-				token := c.Subscribe(topic, 0, handler)
+				token := cli.Subscribe(topic, 0, handler)
 				token.Wait()
 				if err := token.Error(); err != nil {
-					log.Printf("subscribe %s: %v", topic, err)
+					c.log.Error("subscribe failed", "topic", topic, "err", err)
 					continue
 				}
-				log.Printf("subscribed %s", topic)
+				c.log.Debug("subscribed", "topic", topic)
 			}
 			subscribeOnce.Do(func() { close(subscribed) })
 			// Seed/resync from the device's cached state. Note: the device
 			// answers from its last pushed measurement — the fetch does not
 			// trigger a fresh one. Repeats on every reconnect.
-			if err := publishFetchAll(c, userID, sn); err != nil {
-				log.Printf("fetch-all: %v", err)
+			if err := c.publishFetchAll(cli, userID, sn); err != nil {
+				c.log.Error("fetch-all failed", "err", err)
 			}
 		}).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
-			log.Printf("connection lost: %v (auto-reconnect will resubscribe)", err)
+			c.log.Warn("connection lost (auto-reconnect will resubscribe)", "err", err)
 		}))
 
 	token := client.Connect()
@@ -103,85 +106,80 @@ func connectAndSubscribe(creds mqttCredentials, userID, sn string, state *liveSt
 }
 
 // handleRequestMessage watches the app's outbound request topics (read-only
-// sniff; we publish nothing but the fetch-all get). Logging is debug-only:
-// the broker echoes our own fetch-all back here, which is just noise.
-func handleRequestMessage(msg mqtt.Message) {
+// sniff). DebugLog only: the broker echoes our own fetch-all back here, which
+// is just noise.
+func (c *Client) handleRequestMessage(msg mqtt.Message) {
 	payload := msg.Payload()
-	if !isDebugEnabled() {
+	if !c.cfg.DebugLog {
 		return
 	}
-	log.Printf("REQUEST on %s: %d bytes hex=%s", msg.Topic(), len(payload), hex.EncodeToString(payload))
+	c.log.Debug("request sniff", "topic", msg.Topic(), "bytes", len(payload),
+		"hex", hex.EncodeToString(payload))
 	if headers, err := decodeEnvelope(payload); err == nil {
 		for _, h := range headers {
-			log.Printf("  decoded: src=%d dst=%d cmd_set=%d cmd_id=%d seq=%d need_ack=%d pdata=%d bytes hex=%s",
-				h.GetSrc(), h.GetDest(), h.GetCmdFunc(), h.GetCmdId(), h.GetSeq(),
-				h.GetNeedAck(), len(h.GetPdata()), hex.EncodeToString(h.GetPdata()))
+			c.log.Debug("request decoded", "src", h.GetSrc(), "dst", h.GetDest(),
+				"cmd_set", h.GetCmdFunc(), "cmd_id", h.GetCmdId(), "seq", h.GetSeq(),
+				"pdata", hex.EncodeToString(h.GetPdata()))
 		}
-	} else {
-		log.Printf("  not a Send_Header_Msg: %v", err)
 	}
 }
 
 // handleMessage decodes a raw MQTT payload and feeds live telemetry sources
 // into the state assembler.
-func handleMessage(msg mqtt.Message, state *liveState) {
+func (c *Client) handleMessage(msg mqtt.Message) {
 	headers, err := decodeEnvelope(msg.Payload())
 	if err != nil {
-		log.Printf("envelope decode on %s: %v", msg.Topic(), err)
+		c.log.Error("envelope decode failed", "topic", msg.Topic(), "err", err)
 		return
 	}
 	for _, h := range headers {
 		if code := h.GetCode(); code == "-1" || code == "-2" {
-			log.Printf("device %s on %s", map[string]string{"-1": "not bound", "-2": "offline"}[code], msg.Topic())
+			status := map[string]string{"-1": "not bound", "-2": "offline"}[code]
+			c.log.Warn("device status", "status", status, "topic", msg.Topic())
 			return
 		}
-		if isDebugEnabled() {
-			log.Printf("msg on %s: src=%d cmd_set=%d cmd_id=%d payload=%d bytes hex=%s",
-				msg.Topic(), h.GetSrc(), h.GetCmdFunc(), h.GetCmdId(),
-				len(h.GetPdata()), hex.EncodeToString(h.GetPdata()))
+		if c.cfg.DebugLog {
+			c.log.Debug("msg", "topic", msg.Topic(), "src", h.GetSrc(),
+				"cmd_set", h.GetCmdFunc(), "cmd_id", h.GetCmdId(),
+				"bytes", len(h.GetPdata()), "hex", hex.EncodeToString(h.GetPdata()))
 		}
 		switch {
 		case isHeartbeat(h):
 			hb, err := parseHeartbeat(h)
 			if err != nil {
-				log.Printf("heartbeat parse: %v", err)
+				c.log.Error("heartbeat parse failed", "err", err)
 				continue
 			}
-			state.ingestHeartbeat(hb)
+			c.state.ingestHeartbeat(hb)
 		case isBpHeartbeat(h):
 			packs, err := parseBpHeartbeat(h)
 			if err != nil {
-				log.Printf("bp heartbeat parse: %v", err)
+				c.log.Error("bp heartbeat parse failed", "err", err)
 				continue
 			}
-			state.ingestPacks(packs)
+			c.state.ingestPacks(packs)
 		case isEnergyStreamReport(h):
 			// A cmd 33 in a get_reply burst is the device's frozen cache (only
 			// refreshed while the phone app holds the stream switch open) —
 			// never trust it. Push-topic reports are the live stream.
-			if msg.Topic() != devicePropertyTopic(state.sn) {
-				logReportDebug(h, "cmd33 cached (ignored)")
+			if msg.Topic() != devicePropertyTopic(c.cfg.DeviceSN) {
+				c.log.Debug("cmd33 cached (ignored)", "seq", h.GetSeq())
 				continue
 			}
-			logReportDebug(h, "cmd33 EnergyStreamReport")
 			esr, err := parseEnergyStreamReport(h)
 			if err != nil {
-				log.Printf("energy stream report parse: %v", err)
+				c.log.Error("energy stream report parse failed", "err", err)
 				continue
 			}
-			state.ingestSystem(newReport(esr), time.Now())
+			c.state.ingestSystem(reportFromESR(esr, time.Now()), time.Now())
 		case isEnergyStreamDetail(h):
-			logReportDebug(h, "cmd34 EnergyStreamDetail")
 			item, err := parseEnergyStreamDetail(h)
 			if err != nil {
-				log.Printf("energy stream detail parse: %v", err)
+				c.log.Error("energy stream detail parse failed", "err", err)
 				continue
 			}
-			at := time.Now()
-			if ts := item.GetTimestamp(); ts > 0 {
-				at = time.Unix(int64(ts), 0)
-			}
-			state.ingestSystem(newReportFromItem(item), at)
+			r := reportFromItem(item)
+			c.state.ingestSystem(r, r.Time)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package powerocean
 
 import "testing"
 
@@ -21,5 +21,19 @@ func TestWattsSigned(t *testing.T) {
 		if got := wattsSigned(tc.label, tc.w); got != tc.want {
 			t.Errorf("wattsSigned(%q, %v) = %q, want %q", tc.label, tc.w, got, tc.want)
 		}
+	}
+}
+
+func TestPackSocCapacityWeighted(t *testing.T) {
+	packs := []Pack{
+		{SN: "packA", SOC: 85, RealSOC: 84, FullCap: 97000},
+		{SN: "packB", SOC: 82, RealSOC: 82, FullCap: 97000},
+	}
+	// (84*97000 + 82*97000) / (97000+97000) = 83
+	if got := packSoc(packs); got != 83 {
+		t.Errorf("packSoc = %d, want 83", got)
+	}
+	if got := packSoc(nil); got != 0 {
+		t.Errorf("packSoc(nil) = %d, want 0", got)
 	}
 }
