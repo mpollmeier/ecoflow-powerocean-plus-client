@@ -49,17 +49,51 @@ individual battery packs; a `()` suffix shows each pack.
 
 Details and provenance: [`docs/protocol.md`](docs/protocol.md) (wire schema and
 transport findings) and [`docs/auth.md`](docs/auth.md) (login → MQTT
-credentials). In brief:
+credentials). Schemas live in [`proto/`](proto/), Go bindings in `reader/pb/`.
 
-- Transport: EcoFlow cloud MQTT (TLS, username/password from
-  `/iot-auth/app/certification`).
-- Envelope: `Common.Send_Header_Msg` protobuf — repeated `Header{pdata, src,
-  dest, cmd_func, cmd_id, enc_type, seq, …}`; `enc_type=1` payloads are XOR'd
-  with `(byte)seq`.
-- Telemetry: `JtS1Sys.EnergyStreamReport` (`cmd_func=96, cmd_id=33`), plus live
-  `HeartbeatReport` (cmd 1) and per-pack `BpHeartbeatReport` (cmd 7).
-- Schemas in [`proto/`](proto/), reconstructed from the wire interface; Go
-  bindings generated into `reader/pb/`.
+### Connection flow
+
+1. **Login** — `POST https://api.ecoflow.com/auth/login` (email + base64 of the
+   UTF-8 password) → bearer token + user ID.
+2. **MQTT credentials** — `GET /iot-auth/app/certification?userId=…` → broker
+   host/port and MQTT username/password (despite the name, no TLS client
+   certificates are involved).
+3. **Connect** — TLS MQTT (`mqtts://broker:8883`) with those credentials,
+   client ID `ANDROID_<uuid>_<userId>`.
+4. **Subscribe** to the device's topics, all under the user's account:
+   - `/app/device/property/{sn}` — device → us telemetry pushes
+   - `/app/{userId}/{sn}/thing/property/get_reply` — replies to get requests
+   - (the `get`/`set` and `biz/data/request` request topics are also
+     subscribed, but only to log echoes in debug mode)
+
+### Messages we send (all on the two `thing/property` topics)
+
+| What | Topic | When | Effect |
+|---|---|---|---|
+| **Fetch-all** `Send_Header_Msg{src:32, dest:32, from:"Android"}` (a get, no cmd) | `…/thing/property/get` | once at connect / reconnect | device replies on `get_reply` with its cached snapshot (seed data) |
+| **Stream switch** `ENERGY_STREAM_SWITCH=1` (`cmd 97` set, `pdata=0801`) | `…/thing/property/set` | every 10 s keepalive (**the one write**, see warning above) | device accelerates `EnergyStreamReport` pushes from ~30-60 s to a few seconds |
+
+That is the complete outbound surface — nothing else is ever published.
+
+### Messages we receive
+
+| Message | cmd | Cadence | Content |
+|---|---|---|---|
+| `EnergyStreamReport` | 96/33 | few seconds with stream switch, ~30-60 s without | load, grid, MPPT/PV, battery W, SOC |
+| `HeartbeatReport` | 96/1 | ~60 s | live powers, grid meter (per phase), per-string PV |
+| `BpHeartbeatReport` | 96/7 | ~40-60 s bursts | per-pack SOC, power, capacity, serial |
+| `EnergyStreamDetail` | 96/34 | ~10 min | timestamped history samples of the same telemetry |
+
+### Wire format
+
+Everything rides MQTT as `Common.Send_Header_Msg` protobuf — a list of
+`Header{pdata, src, dest, cmd_func, cmd_id, enc_type, seq, …}`, where `pdata`
+is the command-specific protobuf (`enc_type=1` payloads are XOR-obfuscated with
+`(byte)seq` and decoded transparently). Dispatch is by `cmd_func`/`cmd_id`
+(EMS = 96). Note that `EnergyStreamReport`s arriving in `get_reply` are the
+device's **cached** snapshot — the reader ignores those and uses the live push
+sources above; system SOC is capacity-weighted from the individual packs, and
+`load` is derived as `solar + grid − battery`.
 
 ## Development
 
