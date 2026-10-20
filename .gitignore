@@ -1,0 +1,22 @@
+# Ignore every top-level entry by default; only the publishable set is
+# tracked. (Local reverse-engineering artifacts — APKs, jadx extracts,
+# scratch outputs — live next to this repo but must never be committed.)
+/*
+!/.gitignore
+!/AGENTS.md
+!/LICENSE
+!/README.md
+!/go.mod
+!/go.sum
+!/*.go
+!/cmd/
+!/pb/
+!/docs/
+!/proto/
+
+# build artifacts and scratch
+*.out
+*.log
+*.test
+*.exe
+/cmd/ecoflow-powerocean-plus-client/powerocean-client
