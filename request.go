@@ -9,7 +9,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/mpollmeier/powerocean-client/pb"
+	"github.com/mpollmeier/ecoflow-powerocean-plus-client/pb"
 )
 
 // buildFetchAllRequest encodes the app's "fetch all data" request, captured

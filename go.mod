@@ -1,4 +1,4 @@
-module github.com/mpollmeier/powerocean-client
+module github.com/mpollmeier/ecoflow-powerocean-plus-client
 
 go 1.25.0
 

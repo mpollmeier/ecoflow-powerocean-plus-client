@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mpollmeier/powerocean-client/pb"
+	"github.com/mpollmeier/ecoflow-powerocean-plus-client/pb"
 )
 
 // liveState accumulates telemetry from the live sources. The device's cmd 33

@@ -186,10 +186,10 @@ request/response channel (`/app/{userId}/{sn}/thing/property/get` is the device-
 
 ## Step 3 — Go prototype (`reader/`)
 
-1. Layout: Go module `github.com/mpollmeier/powerocean-client`, library package
+1. Layout: Go module `github.com/mpollmeier/ecoflow-powerocean-plus-client`, library package
    `powerocean` at the repo root (`client.go`, `auth.go`, `envelope.go`,
    `state.go`, `report.go`, `mqtt.go`, `request.go`), console client at
-   `cmd/powerocean-client`, generated bindings in `pb/`, tests at the root.
+   `cmd/ecoflow-powerocean-plus-client`, generated bindings in `pb/`, tests at the root.
    Config via env: `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`, `ECOFLOW_DEVICE_SN` (secrets stay in env);
    `ECOFLOW_STREAM=0` (disable the cmd-97 stream switch = strictly read-only, 30-60s cadence),
    `ECOFLOW_DEBUG=1` (raw payload dumps + request sniff logs).

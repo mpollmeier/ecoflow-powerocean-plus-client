@@ -1,5 +1,5 @@
-// Command powerocean-client streams live energy telemetry from an EcoFlow
-// Power Ocean Plus battery to the console.
+// Command ecoflow-powerocean-plus-client streams live energy telemetry from an
+// EcoFlow Power Ocean Plus battery to the console.
 //
 // Configuration is via environment (see README). Its only write is the
 // energy-stream switch keepalive (cmd 97) which opens the telemetry reporting
@@ -14,7 +14,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mpollmeier/powerocean-client"
+	"github.com/mpollmeier/ecoflow-powerocean-plus-client"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 	defer stop()
 
 	if err := client.Run(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "powerocean-client:", err)
+		fmt.Fprintln(os.Stderr, "ecoflow-powerocean-plus-client:", err)
 		os.Exit(1)
 	}
 }

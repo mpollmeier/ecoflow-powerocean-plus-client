@@ -1,4 +1,4 @@
-# powerocean-client
+# ecoflow-powerocean-plus-client
 
 Unofficial Go client for the EcoFlow **Power Ocean Plus** home battery
 (product type 87, serial prefix `R37`).
@@ -6,7 +6,7 @@ Unofficial Go client for the EcoFlow **Power Ocean Plus** home battery
 It connects to the EcoFlow cloud MQTT API and live-streams energy telemetry:
 battery SOC and power, PV (per-string MPPT + PV inverter), house load, and grid
 power — the same values as the official app's dashboard, at the same cadence.
-Usable as a library (`import "github.com/mpollmeier/powerocean-client"`) or via
+Usable as a library (`import powerocean "github.com/mpollmeier/ecoflow-powerocean-plus-client"`) or via
 the included console client.
 
 **Not affiliated with, endorsed by, or supported by EcoFlow.** Use at your own
@@ -15,7 +15,7 @@ risk.
 ## Library usage
 
 ```go
-import "github.com/mpollmeier/powerocean-client"
+import powerocean "github.com/mpollmeier/ecoflow-powerocean-plus-client"
 
 client, err := powerocean.New(powerocean.Config{
     Email:    "you@example.com",
@@ -41,7 +41,7 @@ export ECOFLOW_EMAIL='you@example.com'
 export ECOFLOW_PASSWORD='your password'
 export ECOFLOW_DEVICE_SN='R37…'           # device serial
 
-go run ./cmd/powerocean-client
+go run ./cmd/ecoflow-powerocean-plus-client
 ```
 
 Example output (updated every few seconds while the stream switch is on):
@@ -129,10 +129,10 @@ go vet ./...
 Regenerate Go bindings after editing protos:
 
 ```bash
-protoc -I . --go_out=. --go_opt=module=github.com/mpollmeier/powerocean-client \
-  --go_opt=Mproto/Common.proto=github.com/mpollmeier/powerocean-client/pb \
-  --go_opt=Mproto/jt_s1_cmd.proto=github.com/mpollmeier/powerocean-client/pb \
-  --go_opt=Mproto/jt_s1_sys.proto=github.com/mpollmeier/powerocean-client/pb \
+protoc -I . --go_out=. --go_opt=module=github.com/mpollmeier/ecoflow-powerocean-plus-client \
+  --go_opt=Mproto/Common.proto=github.com/mpollmeier/ecoflow-powerocean-plus-client/pb \
+  --go_opt=Mproto/jt_s1_cmd.proto=github.com/mpollmeier/ecoflow-powerocean-plus-client/pb \
+  --go_opt=Mproto/jt_s1_sys.proto=github.com/mpollmeier/ecoflow-powerocean-plus-client/pb \
   proto/Common.proto proto/jt_s1_cmd.proto proto/jt_s1_sys.proto
 ```
 
