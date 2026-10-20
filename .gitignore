@@ -1,22 +1,16 @@
-# Ignore every top-level entry by default; only the publishable set is
-# tracked. (Local reverse-engineering artifacts — APKs, jadx extracts,
-# scratch outputs — live next to this repo but must never be committed.)
-/*
-!/.gitignore
-!/AGENTS.md
-!/LICENSE
-!/README.md
-!/go.mod
-!/go.sum
-!/*.go
-!/cmd/
-!/pb/
-!/docs/
-!/proto/
-
-# build artifacts and scratch
-*.out
-*.log
-*.test
+# Build artifacts — never commit
+/bin/
 *.exe
-/cmd/ecoflow-powerocean-plus-client/powerocean-client
+*.test
+*.out
+*.prof
+/ecoflow-powerocean-plus-client
+/cmd/ecoflow-powerocean-plus-client/ecoflow-powerocean-plus-client
+
+# Local reverse-engineering artifacts (see AGENTS.md) — never commit
+/apks/
+/decompiled/
+/powerocean-mqtt/
+/dexrefs.py
+/plan-reader.md
+/power-ocean-plus-findings.md
