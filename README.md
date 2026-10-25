@@ -132,7 +132,6 @@ individual battery packs; a `()` suffix shows each pack.
 | `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`, `ECOFLOW_DEVICE_SN` | required credentials and target device |
 | `--set-backup-reserve=<0-100>` | one-shot write: set the battery's backup reserve and exit, instead of streaming (library equivalent: `SetBackupReserve`) |
 | `ECOFLOW_STREAM=0` | disable the stream-switch write (strictly read-only, slower cadence; library equivalent: leave `Config.StreamSwitch` false) |
-| `ECOFLOW_SET_BACKUP_RESERVE=<0-100>` | fallback for `--set-backup-reserve` when the flag is not given |
 | `ECOFLOW_DEBUG=1` | raw payload hex dumps and request sniff logs |
 
 ## Protocol summary
