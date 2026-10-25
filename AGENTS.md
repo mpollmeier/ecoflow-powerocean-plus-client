@@ -36,7 +36,8 @@ code is included anywhere in this repo.
 
 ## Local RE artifacts (gitignored — not present in a fresh clone)
 
-All under `/home/mp/Projects/ecoflow-powerocean-plus-client/`:
+All under `/home/mp/Projects/ecoflow-android-app/` (sibling dir, *not* this repo —
+the RE artifacts live outside the library repo):
 
 | Path | What |
 |---|---|
@@ -44,13 +45,13 @@ All under `/home/mp/Projects/ecoflow-powerocean-plus-client/`:
 | `apks/6.17.4.14/decompiled/sources/` | full jadx tree — **INCOMPLETE** (jadx crashed mid-run) |
 | `decompiled/` | 32 authoritative single-class jadx extracts (`JtS1Sys.java` = full proto schema, `JtS1Cmd.java` = enums, `x00_c.java` = S1 dispatch, `EcoPacket.java`, `MqttContracts.java`, …) |
 | `dexrefs.py` | dex string/bytecode scanner: `python3 dexrefs.py <dex> <regex>` |
-| `plan-reader.md` | working protocol notes / original plan (local; `docs/protocol.md` is its scrubbed published copy) |
+| `protocol-notes.md` | working protocol notes / original plan (local; `docs/protocol.md` is its scrubbed published copy) |
 | `power-ocean-plus-findings.md` | early RE findings (product id, SN prefixes, driver layout) |
 | `powerocean-mqtt/` | older Go prototype (JSON path — the *other* driver, not used here) |
 | `reader.out` | capture log — **contains the real device SN, do not publish** |
 
 The `.gitignore` is a whitelist (`/*` + un-ignore list). `apks/`, `decompiled/`,
-`plan-reader.md`, `reader.out`, `dexrefs.py` etc. must never be committed.
+`protocol-notes.md`, `reader.out`, `dexrefs.py` etc. must never be committed.
 
 ## Looking things up in the APK
 
