@@ -40,7 +40,7 @@ func main() {
 		Email:    "you@example.com",
 		Password: "your password", // sent as base64(UTF-8), like the official app
 		DeviceSN: "R37…",          // device serial
-		// StreamSwitch: true,    // the one write — see the note below; default off
+		// StreamSwitch: true,    // opens the telemetry stream — see the note below; default off
 		OnReport: func(r powerocean.Report) { fmt.Print(r) },
 	})
 	if err != nil {
@@ -58,7 +58,7 @@ func main() {
 `Report` carries battery SOC (system + per-pack), battery/solar/load/grid
 watts, and a `Derived` flag (see wire-format notes below). The zero config is
 strictly read-only; `StreamSwitch: true` opts into the stream keepalive write
-([what that write does](#note-the-client-sends-one-write-command)).
+([what that write does](#note-the-clients-write-commands)).
 
 ## Console client
 
@@ -68,6 +68,13 @@ export ECOFLOW_PASSWORD='your password'
 export ECOFLOW_DEVICE_SN='R37…'           # device serial
 
 go run ./cmd/ecoflow-powerocean-plus-client
+```
+
+To set the backup reserve (the percent SOC kept for backup power) and exit,
+pass the value as a flag:
+
+```bash
+go run ./cmd/ecoflow-powerocean-plus-client --set-backup-reserve=30
 ```
 
 Example output (updated every few seconds while the stream switch is on):
@@ -92,7 +99,9 @@ individual battery packs; a `()` suffix shows each pack.
 | Variable | Meaning |
 |---|---|
 | `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`, `ECOFLOW_DEVICE_SN` | required credentials and target device |
+| `--set-backup-reserve=<0-100>` | one-shot write: set the battery's backup reserve and exit, instead of streaming (library equivalent: `SetBackupReserve`) |
 | `ECOFLOW_STREAM=0` | disable the stream-switch write (strictly read-only, slower cadence; library equivalent: leave `Config.StreamSwitch` false) |
+| `ECOFLOW_SET_BACKUP_RESERVE=<0-100>` | fallback for `--set-backup-reserve` when the flag is not given |
 | `ECOFLOW_DEBUG=1` | raw payload hex dumps and request sniff logs |
 
 ## Protocol summary
@@ -121,7 +130,8 @@ credentials). Schemas live in [`proto/`](proto/), Go bindings in [`pb/`](pb/).
 | What | Topic | When | Effect |
 |---|---|---|---|
 | **Fetch-all** `Send_Header_Msg{src:32, dest:32, from:"Android"}` (a get, no cmd) | `…/thing/property/get` | once at connect / reconnect | device replies on `get_reply` with its cached snapshot (seed data) |
-| **Stream switch** `ENERGY_STREAM_SWITCH=1` (`cmd 97` set, `pdata=0801`) | `…/thing/property/set` | every 10 s keepalive (**the one write**, see warning above) | device accelerates `EnergyStreamReport` pushes from ~30-60 s to a few seconds |
+| **Stream switch** `ENERGY_STREAM_SWITCH=1` (`cmd 97` set, `pdata=0801`) | `…/thing/property/set` | every 10 s keepalive (see warning below) | device accelerates `EnergyStreamReport` pushes from ~30-60 s to a few seconds |
+| **Backup reserve** `SYS_BAT_CHG_DSG_SET` (`cmd 112` set, `sys_bat_dsg_down_limie=%`) | `…/thing/property/set` | only with `--set-backup-reserve` (or `SetBackupReserve`) | changes the battery's backup-reserve level (a real battery-setting write) |
 
 That is the complete outbound surface — nothing else is ever published.
 
@@ -162,21 +172,32 @@ protoc -I . --go_out=. --go_opt=module=github.com/mpollmeier/ecoflow-powerocean-
   proto/Common.proto proto/jt_s1_cmd.proto proto/jt_s1_sys.proto
 ```
 
-## Note: the client sends one write command
+## Note: the client's write commands
 
-With `Config.StreamSwitch: true` (the console client's default), the client
-publishes `ENERGY_STREAM_SWITCH = 1` (a **set** command) every 10 seconds. This
-is the same command the official app sends whenever its dashboard is open: it
-opens the telemetry *reporting stream*, which makes the device push
-`EnergyStreamReport` every few seconds instead of its default ~30–60 s cadence.
-It does **not** touch any power-flow, charge, or inverter setting — only how
-often the device reports.
+The client is read-only by default. It can perform exactly two writes, both
+strictly opt-in:
 
-- Leave `StreamSwitch` false (the library default) for a strictly read-only
-  client: it then only **subscribes** and sends a single read-only "fetch all"
-  *get* at connect time (plus one per reconnect), and telemetry arrives at the
-  device's slower natural cadence. Console equivalent: `ECOFLOW_STREAM=0`.
-- No other write commands are ever sent (no charge/discharge limits, no
+1. **Stream switch** (`Config.StreamSwitch: true`, the console client's
+   default): it publishes `ENERGY_STREAM_SWITCH = 1` (a **set** command) every
+   10 seconds. This is the same command the official app sends whenever its
+   dashboard is open: it opens the telemetry *reporting stream*, which makes
+   the device push `EnergyStreamReport` every few seconds instead of its
+   default ~30–60 s cadence. It does **not** touch any power-flow, charge, or
+   inverter setting — only how often the device reports.
+
+2. **Backup reserve** (`SetBackupReserve`, console flag
+   `--set-backup-reserve=<0-100>`): publishes one `SYS_BAT_CHG_DSG_SET`
+   (`cmd 112`) with `sys_bat_dsg_down_limie` set (the device's discharge
+   floor, labelled "Backup-Reserve" in the German app), then exits. This is the
+   same command the app's battery settings send and it **does change a battery
+   setting**. It is never sent unless you explicitly invoke it.
+
+- Leave `StreamSwitch` false (the library default) and never call
+  `SetBackupReserve` for a strictly read-only client: it then only
+  **subscribes** and sends a single read-only "fetch all" *get* at connect time
+  (plus one per reconnect), and telemetry arrives at the device's slower
+  natural cadence. Console equivalent: `ECOFLOW_STREAM=0`.
+- No other write commands are ever sent (no charge-limit changes, no
   work-mode changes, no reset — nothing else).
 
 ## Legal note

@@ -28,7 +28,8 @@ code is included anywhere in this repo.
 | `state.go` | live-state assembler: merges sources, debounces, dedups, derives |
 | `report.go` | `Report`/`Pack` types, rendering, SOC weighting, sign conventions |
 | `mqtt.go` | connection, topics, message handlers (Client methods) |
-| `request.go` | request builders: fetch-all get + cmd-97 stream switch |
+| `request.go` | request builders: fetch-all get + cmd-97 stream switch + cmd-112 backup-reserve set |
+| `control.go` | `SetBackupReserve` — one-shot cmd-112 write (opt-in) |
 | `pb/` | generated Go protobuf bindings — never hand-edit, regenerate |
 | `proto/` | reconstructed wire schemas (`Common`, `jt_s1_cmd`, `jt_s1_sys`) |
 | `*_test.go` | unit tests incl. byte-fidelity tests vs captured wire frames |
@@ -79,9 +80,12 @@ truth now. Regeneration command is in the README.
   (`/app/device/property/{sn}`) cmd 33 is live.
 - Signs (JtS1Sys driver!): battery `>0` charging, grid `>0` importing — the
   *opposite* of the pocommon JSON driver. Derived `load = solar + grid − battery`.
-- Outbound surface is exactly two publishes: the fetch-all **get** (seed only —
-  does not trigger a fresh measurement) and, opt-in, the **cmd 97** stream
-  switch keepalive (the one write; opens reporting cadence ~5 s).
+- Outbound surface is three publishes: the fetch-all **get** (seed only — does
+  not trigger a fresh measurement), the opt-in **cmd 97** stream switch
+  keepalive (opens reporting cadence ~5 s), and the opt-in **cmd 112**
+  backup-reserve set (`SysBatChgDsgSet.sys_bat_dsg_down_limie` — the discharge
+  floor the German app labels "Backup-Reserve", CLI flag `--set-backup-reserve`).
+  The two writes are strictly opt-in.
 
 ## Build / test / run
 
@@ -98,10 +102,13 @@ way.
 
 ## Guardrails
 
-- **The one write**: `Config.StreamSwitch` (CLI default on, `ECOFLOW_STREAM=0`
-  to disable) sends cmd 97 — a reporting-stream toggle only, no power-flow
-  settings. Never add other write cmd ids (`*_SET`, reset, …) without an
-  explicit user decision.
+- **The two writes, both opt-in**: `Config.StreamSwitch` (CLI default on,
+  `ECOFLOW_STREAM=0` to disable) sends cmd 97 — a reporting-stream toggle only,
+  no power-flow settings. `SetBackupReserve` (CLI flag
+  `--set-backup-reserve`, numbers 0-100) sends cmd 112
+  (`SysBatChgDsgSet.sys_bat_dsg_down_limie`) — a real battery-setting write. Do
+  not add any other write cmd ids (`*_SET`, reset, …) without an explicit user
+  decision.
 - Real device/pack serials and user IDs were scrubbed from tracked files before
   open-sourcing; keep them out. Live credentials come from the operator's env.
 - The operator performs git remotes/pushes/PRs themselves — don't.

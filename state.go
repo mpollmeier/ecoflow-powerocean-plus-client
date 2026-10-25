@@ -30,6 +30,10 @@ type liveState struct {
 	packs        map[string]Pack
 	sysAt        time.Time
 	sysReport    *Report // newest cmd 33/34 system sample
+	backupRsv    uint32  // sys_bat_dsg_down_limit (app's "Backup-Reserve")
+	chargeLimit  uint32  // sys_bat_chg_up_limit
+	backupRatio  uint32  // sys_bat_backup_ratio (informational)
+	hasLimits    bool
 	printTimer   *time.Timer
 	debounce     time.Duration
 	lastRendered string
@@ -129,6 +133,24 @@ func (s *liveState) ingestPacks(packs []*pb.BpStaReport) {
 	s.armReportLocked()
 }
 
+// ingestChangeReport stores the device's battery setting values (cmd 8), which
+// is where the backup-reserve / charge-limit live.
+func (s *liveState) ingestChangeReport(r *pb.EmsChangeReport) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.SysBatDsgDownLimit != nil {
+		s.backupRsv = r.GetSysBatDsgDownLimit()
+	}
+	if r.SysBatChgUpLimit != nil {
+		s.chargeLimit = r.GetSysBatChgUpLimit()
+	}
+	if r.SysBatBackupRatio != nil {
+		s.backupRatio = r.GetSysBatBackupRatio()
+	}
+	s.hasLimits = true
+	s.armReportLocked()
+}
+
 // snapshot renders the freshest coherent report (test/debug helper).
 func (s *liveState) snapshot() (Report, bool) {
 	s.mu.Lock()
@@ -142,6 +164,7 @@ func (s *liveState) snapshotLocked() (Report, bool) {
 	if s.sysReport != nil && time.Since(s.sysAt) < sysSampleFresh {
 		r := *s.sysReport
 		r.Packs = s.sortedPacks()
+		s.applyLimits(&r)
 		return r, true
 	}
 	if s.hbAt.IsZero() && len(s.packs) == 0 {
@@ -169,7 +192,18 @@ func (s *liveState) snapshotLocked() (Report, bool) {
 		r.BatterySOC = packSoc(packs)
 		r.HasSOC = true
 	}
+	s.applyLimits(&r)
 	return r, true
+}
+
+func (s *liveState) applyLimits(r *Report) {
+	if !s.hasLimits {
+		return
+	}
+	r.BackupReserve = s.backupRsv
+	r.ChargeLimit = s.chargeLimit
+	r.BackupRatio = s.backupRatio
+	r.HasLimits = true
 }
 
 func (s *liveState) sortedPacks() []Pack {
@@ -183,9 +217,10 @@ func (s *liveState) sortedPacks() []Pack {
 
 // contentKey is the report's values without timestamps, for deduplication.
 func (r Report) contentKey() string {
-	return fmt.Sprintf("%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%d|%t",
+	return fmt.Sprintf("%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%d|%t|%d|%d|%d",
 		r.BatteryW, r.SolarMPPT, r.SolarPV1, r.SolarPV2, r.SolarPV3,
-		r.GridW, r.BatterySOC, r.Derived) + packDetail(r.Packs)
+		r.GridW, r.BatterySOC, r.Derived, r.BackupReserve, r.ChargeLimit,
+		r.BackupRatio) + packDetail(r.Packs)
 }
 
 func stringAt(s []float32, i int) float32 {

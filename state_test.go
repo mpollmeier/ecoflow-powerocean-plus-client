@@ -68,6 +68,27 @@ func TestLiveStatePrefersFreshSystemSample(t *testing.T) {
 	}
 }
 
+func TestLiveStateChangeReportStoresLimits(t *testing.T) {
+	state := newLiveState("R371TEST", func(Report) {})
+	state.ingestHeartbeat(&pb.HeartbeatReport{EmsBpPower: proto.Float32(-100)})
+	state.ingestChangeReport(&pb.EmsChangeReport{
+		SysBatDsgDownLimit: proto.Uint32(3),
+		SysBatChgUpLimit:   proto.Uint32(90),
+		SysBatBackupRatio:  proto.Uint32(20),
+	})
+
+	r, ok := state.snapshot()
+	if !ok {
+		t.Fatal("no snapshot")
+	}
+	if !r.HasLimits {
+		t.Fatal("limits not present")
+	}
+	if r.BackupReserve != 3 || r.ChargeLimit != 90 || r.BackupRatio != 20 {
+		t.Errorf("limits: got %d/%d/%d, want 3/90/20", r.BackupReserve, r.ChargeLimit, r.BackupRatio)
+	}
+}
+
 func TestLiveStateIgnoresStaleSystemSample(t *testing.T) {
 	state := newLiveState("R371TEST", func(Report) {})
 	stale := reportFromESR(&pb.EnergyStreamReport{BpSoc: 92, BpPwr: -519}, time.Now().Add(-2*time.Hour))

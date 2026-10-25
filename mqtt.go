@@ -33,6 +33,7 @@ func deviceTopics(userID, sn string) []string {
 	return []string{
 		devicePropertyTopic(sn),
 		fmt.Sprintf("/app/%s/%s/thing/property/get_reply", userID, sn),
+		fmt.Sprintf("/app/%s/%s/thing/property/set_reply", userID, sn),
 	}
 }
 
@@ -180,6 +181,17 @@ func (c *Client) handleMessage(msg mqtt.Message) {
 			}
 			r := reportFromItem(item)
 			c.state.ingestSystem(r, r.Time)
+		case isChangeReport(h):
+			cr, err := parseChangeReport(h)
+			if err != nil {
+				c.log.Error("ems change report parse failed", "err", err)
+				continue
+			}
+			c.state.ingestChangeReport(cr)
+			c.log.Debug("ems change report", "backup_reserve", cr.GetSysBatDsgDownLimit(),
+				"charge_limit", cr.GetSysBatChgUpLimit(),
+				"backup_ratio", cr.GetSysBatBackupRatio(),
+				"keep_soc", cr.GetEmsKeepSoc())
 		}
 	}
 }

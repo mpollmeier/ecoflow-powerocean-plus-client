@@ -58,6 +58,10 @@ func isHeartbeat(h *pb.Header) bool {
 	return isEms(h, pb.EmsCmdId_EMS_CMD_ID_HEARTBEAT_REPORT)
 }
 
+func isChangeReport(h *pb.Header) bool {
+	return isEms(h, pb.EmsCmdId_EMS_CMD_ID_CHANGE_REPORT)
+}
+
 func parseEnergyStreamReport(h *pb.Header) (*pb.EnergyStreamReport, error) {
 	var r pb.EnergyStreamReport
 	if err := proto.Unmarshal(h.GetPdata(), &r); err != nil {
@@ -99,6 +103,14 @@ func parseHeartbeat(h *pb.Header) (*pb.HeartbeatReport, error) {
 	var r pb.HeartbeatReport
 	if err := proto.Unmarshal(h.GetPdata(), &r); err != nil {
 		return nil, fmt.Errorf("HeartbeatReport: %w", err)
+	}
+	return &r, nil
+}
+
+func parseChangeReport(h *pb.Header) (*pb.EmsChangeReport, error) {
+	var r pb.EmsChangeReport
+	if err := proto.Unmarshal(h.GetPdata(), &r); err != nil {
+		return nil, fmt.Errorf("EmsChangeReport: %w", err)
 	}
 	return &r, nil
 }

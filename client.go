@@ -11,8 +11,9 @@
 // The zero-config stance is read-only: with Config.StreamSwitch unset the
 // client only subscribes and sends one read-only fetch at connect, and
 // telemetry arrives at the device's natural push cadence (~30-60 s). Setting
-// StreamSwitch enables the single write this client can perform — the
-// ENERGY_STREAM_SWITCH keepalive (cmd 97 = 1, see Config.StreamSwitch).
+// StreamSwitch enables the write that opens the telemetry reporting stream
+// (ENERGY_STREAM_SWITCH keepalive, cmd 97 = 1); SetBackupReserve is the other,
+// one-shot write that changes a battery setting (cmd 112). Both are opt-in.
 //
 // Basic use:
 //
@@ -33,6 +34,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 // Config configures a Client.
@@ -43,12 +46,13 @@ type Config struct {
 	Password string
 	DeviceSN string
 
-	// StreamSwitch enables the only write this client performs: the
-	// ENERGY_STREAM_SWITCH keepalive (cmd 97 = 1, re-sent every 10 s), the
-	// same command the official app sends while its dashboard is open. It
-	// opens the telemetry *reporting stream* — the device pushes
-	// EnergyStreamReport every few seconds instead of every ~30-60 s. It does
-	// NOT touch any power-flow, charge, or inverter setting.
+	// StreamSwitch enables the energy-stream keepalive write: the
+	// ENERGY_STREAM_SWITCH (cmd 97 = 1, re-sent every 10 s), the same command
+	// the official app sends while its dashboard is open. It opens the
+	// telemetry *reporting stream* — the device pushes EnergyStreamReport
+	// every few seconds instead of every ~30-60 s. It does NOT touch any
+	// power-flow, charge, or inverter setting. (The other write is
+	// SetBackupReserve.)
 	//
 	// Leave false for a strictly read-only client (slower cadence).
 	StreamSwitch bool
@@ -92,6 +96,23 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
+// dial authenticates and connects to the MQTT broker, subscribing to the
+// device's telemetry topics. The caller owns the returned client (call
+// Disconnect when done).
+func (c *Client) dial(ctx context.Context) (mqtt.Client, string, error) {
+	creds, mqttCreds, err := c.loginAndFetchMQTT(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("powerocean: auth: %w", err)
+	}
+	c.log.Info("authenticated", "user", creds.UserID, "broker", mqttCreds.URL)
+
+	cli, err := c.connectAndSubscribe(mqttCreds, creds.UserID, c.cfg.DeviceSN)
+	if err != nil {
+		return nil, "", fmt.Errorf("powerocean: mqtt: %w", err)
+	}
+	return cli, creds.UserID, nil
+}
+
 // Run connects and delivers telemetry reports through Config.OnReport until
 // ctx is cancelled, then disconnects cleanly and returns nil.
 //
@@ -99,20 +120,14 @@ func New(cfg Config) (*Client, error) {
 // seeds state from the device's cache, and — only if Config.StreamSwitch is
 // set — the energy-stream switch keepalive.
 func (c *Client) Run(ctx context.Context) error {
-	creds, mqttCreds, err := c.loginAndFetchMQTT(ctx)
+	cli, userID, err := c.dial(ctx)
 	if err != nil {
-		return fmt.Errorf("powerocean: auth: %w", err)
-	}
-	c.log.Info("authenticated", "user", creds.UserID, "broker", mqttCreds.URL)
-
-	cli, err := c.connectAndSubscribe(mqttCreds, creds.UserID, c.cfg.DeviceSN)
-	if err != nil {
-		return fmt.Errorf("powerocean: mqtt: %w", err)
+		return err
 	}
 	defer cli.Disconnect(250)
 
 	if c.cfg.StreamSwitch {
-		c.startStreamSwitch(ctx, cli, creds.UserID, c.cfg.DeviceSN)
+		c.startStreamSwitch(ctx, cli, userID, c.cfg.DeviceSN)
 	}
 
 	<-ctx.Done()

@@ -55,23 +55,24 @@ func (c *Client) publishFetchAll(cli mqtt.Client, userID, sn string) error {
 // switch while its dashboard is open.
 const streamKeepalive = 10 * time.Second
 
-// buildStreamSwitchRequest encodes the app's ENERGY_STREAM_SWITCH set
-// (cmd 97, pdata = ems_open_energy_stream:1), captured live from the phone app
-// on .../thing/property/set. This only opens the telemetry *reporting* stream
-// (few-seconds cmd 33 pushes) — it touches no power-flow setting. The switch
-// expires server-side unless kept alive, exactly like the app does.
-func buildStreamSwitchRequest(sn string) []byte {
+// buildEMSRequest encodes one EMS set command on .../thing/property/set with
+// the field layout the app uses for every set it sends (src 32 → dest 96,
+// cmd_func 96, need_ack 1, from "android"). It returns the encoded envelope
+// and the random seq stamped into its header, so callers can correlate the
+// device's set_reply acknowledgement.
+func buildEMSRequest(sn string, cmd pb.EmsCmdId, pdata []byte) ([]byte, *int32) {
+	seq := rand.Int31()
 	env := &pb.Send_Header_Msg{Msg: []*pb.Header{{
-		Pdata:      []byte{0x08, 0x01}, // EnergyStreamSwitch{ems_open_energy_stream: 1}
+		Pdata:      pdata,
 		Src:        32,
 		Dest:       96,
 		DSrc:       1,
 		DDest:      1,
 		CmdFunc:    int32(pb.CmdSets_EMS_CMD_SETS),
-		CmdId:      int32(pb.EmsCmdId_EMS_CMD_ID_ENERGY_STREAM_SWITCH),
-		DataLen:    2,
+		CmdId:      int32(cmd),
+		DataLen:    int32(len(pdata)),
 		NeedAck:    1,
-		Seq:        rand.Int31(),
+		Seq:        seq,
 		ProductId:  1,
 		Version:    19,
 		PayloadVer: 1,
@@ -82,7 +83,30 @@ func buildStreamSwitchRequest(sn string) []byte {
 	if err != nil {
 		panic(err) // static message, cannot fail
 	}
+	return raw, &seq
+}
+
+// buildStreamSwitchRequest encodes the app's ENERGY_STREAM_SWITCH set
+// (cmd 97, pdata = ems_open_energy_stream:1), captured live from the phone app
+// on .../thing/property/set. This only opens the telemetry *reporting* stream
+// (few-seconds cmd 33 pushes) — it touches no power-flow setting. The switch
+// expires server-side unless kept alive, exactly like the app does.
+func buildStreamSwitchRequest(sn string) []byte {
+	raw, _ := buildEMSRequest(sn, pb.EmsCmdId_EMS_CMD_ID_ENERGY_STREAM_SWITCH,
+		[]byte{0x08, 0x01}) // EnergyStreamSwitch{ems_open_energy_stream: 1}
 	return raw
+}
+
+// buildBackupReserveRequest encodes the SYS_BAT_CHG_DSG_SET command that the
+// app's battery settings screen sends: pdata is a SysBatChgDsgSet with only
+// sys_bat_dsg_down_limie set — the battery's discharge floor, which the German
+// app labels "Backup-Reserve". See docs/protocol.md.
+func buildBackupReserveRequest(sn string, percent uint32) ([]byte, *int32) {
+	pdata, err := proto.Marshal(&pb.SysBatChgDsgSet{SysBatDsgDownLimie: proto.Uint32(percent)})
+	if err != nil {
+		panic(err) // static message, cannot fail
+	}
+	return buildEMSRequest(sn, pb.EmsCmdId_EMS_CMD_ID_SYS_BAT_CHG_DSG_SET, pdata)
 }
 
 // startStreamSwitch opens the energy-stream reporting switch and keeps it open

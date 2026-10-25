@@ -39,6 +39,19 @@ type Report struct {
 	LoadW        float32
 	GridW        float32
 
+	// Battery setters, reported by the device in EmsChangeReport (cmd 8).
+	// HasLimits is true once these have been received and reflect the current
+	// device settings.
+	//
+	//	BackupReserve = sys_bat_dsg_down_limit — the discharge floor, labelled
+	//	                "Backup-Reserve" in the German app.
+	//	ChargeLimit   = sys_bat_chg_up_limit — "Ladegrenze".
+	//	BackupRatio   = sys_bat_backup_ratio — a separate (AI-mode) ratio.
+	BackupReserve uint32
+	ChargeLimit   uint32
+	BackupRatio   uint32
+	HasLimits     bool
+
 	// Derived is true when the report was assembled from live heartbeats and
 	// pack updates rather than a full system sample pushed by the device.
 	// Derived reports compute LoadW from the power balance
@@ -65,6 +78,10 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "  Solar (PV inv) : %.0f W\n", r.SolarPVInv)
 	fmt.Fprintf(&b, "  Load           : %.0f W\n", r.LoadW)
 	fmt.Fprintf(&b, "  Grid           : %s\n", wattsSigned("Grid", r.GridW))
+	if r.HasLimits {
+		fmt.Fprintf(&b, "  Settings       : backup reserve %d%%, charge limit %d%%\n",
+			r.BackupReserve, r.ChargeLimit)
+	}
 	return b.String()
 }
 
