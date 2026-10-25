@@ -60,6 +60,37 @@ watts, and a `Derived` flag (see wire-format notes below). The zero config is
 strictly read-only; `StreamSwitch: true` opts into the stream keepalive write
 ([what that write does](#note-the-clients-write-commands)).
 
+### Setting the backup reserve
+
+The backup reserve (the discharge floor the German app labels
+"Backup-Reserve") is a one-shot write, not part of the streaming loop:
+
+```go
+client, err := powerocean.New(powerocean.Config{
+	Email:    "you@example.com",
+	Password: "your password",
+	DeviceSN: "R37…",
+	OnReport: func(r powerocean.Report) { fmt.Print(r) },
+})
+if err != nil {
+	panic(err)
+}
+
+ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT)
+defer stop()
+
+// Set the backup reserve to 30 % and wait for the device's acknowledgement.
+if err := client.SetBackupReserve(ctx, 30); err != nil {
+	panic(err)
+}
+```
+
+`SetBackupReserve` authenticates, connects, publishes one
+`SYS_BAT_CHG_DSG_SET` (`cmd 112`, field `sys_bat_dsg_down_limie`), waits
+briefly for the acknowledgement, and disconnects. The value is also surfaced
+read-only during streaming: `Report.BackupReserve`, `Report.ChargeLimit` and
+`Report.BackupRatio` (see [what that write does](#note-the-clients-write-commands)).
+
 ## Console client
 
 ```bash
@@ -70,8 +101,8 @@ export ECOFLOW_DEVICE_SN='R37…'           # device serial
 go run ./cmd/ecoflow-powerocean-plus-client
 ```
 
-To set the backup reserve (the percent SOC kept for backup power) and exit,
-pass the value as a flag:
+To set the backup reserve (the discharge floor the German app labels
+"Backup-Reserve") and exit, pass the value as a flag:
 
 ```bash
 go run ./cmd/ecoflow-powerocean-plus-client --set-backup-reserve=30
