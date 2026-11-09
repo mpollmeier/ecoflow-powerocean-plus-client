@@ -68,6 +68,31 @@ func TestLiveStatePrefersFreshSystemSample(t *testing.T) {
 	}
 }
 
+func TestLiveStatePrefersPackSOCOverFreshSystemSample(t *testing.T) {
+	state := newLiveState("R371TEST", func(Report) {})
+	state.ingestSystem(reportFromESR(&pb.EnergyStreamReport{BpSoc: 10, BpPwr: -300}, time.Now()), time.Now())
+	state.ingestPacks([]*pb.BpStaReport{
+		{BpSn: []byte("packA"), BpSoc: proto.Uint32(5), BpRealSoc: proto.Float32(5), BpFullCap: proto.Uint32(97000)},
+	})
+
+	r, ok := state.snapshot()
+	if !ok {
+		t.Fatal("no snapshot")
+	}
+	if r.Derived {
+		t.Error("fresh system power fields must still take precedence")
+	}
+	if r.BatteryW != -300 {
+		t.Errorf("battery: got %v, want -300 (system sample)", r.BatteryW)
+	}
+	if !r.HasSOC || r.BatterySOC != 5 {
+		t.Errorf("soc: got %d (has=%v), want 5 (pack heartbeat)", r.BatterySOC, r.HasSOC)
+	}
+	if len(r.Packs) != 1 {
+		t.Errorf("packs: got %d, want 1", len(r.Packs))
+	}
+}
+
 func TestLiveStateChangeReportStoresLimits(t *testing.T) {
 	state := newLiveState("R371TEST", func(Report) {})
 	state.ingestHeartbeat(&pb.HeartbeatReport{EmsBpPower: proto.Float32(-100)})

@@ -164,6 +164,11 @@ func (s *liveState) snapshotLocked() (Report, bool) {
 	if s.sysReport != nil && time.Since(s.sysAt) < sysSampleFresh {
 		r := *s.sysReport
 		r.Packs = s.sortedPacks()
+		if len(r.Packs) > 0 {
+			// Pack heartbeats can be newer than the full-system SOC.
+			r.BatterySOC = packSoc(r.Packs)
+			r.HasSOC = true
+		}
 		s.applyLimits(&r)
 		return r, true
 	}
