@@ -112,8 +112,8 @@ func wattsSigned(label string, w float32) string {
 }
 
 // packSoc is the capacity-weighted pack SOC (plain mean when capacities are
-// unknown). Pack heartbeats are preferred when available because the
-// full-system SOC can be stale; the system SOC is the no-packs fallback.
+// unknown), used when no fresh full-system SOC is available. The system BMS
+// estimate shown by the app can legitimately differ from a pack average.
 func packSoc(packs []Pack) uint32 {
 	if len(packs) == 0 {
 		return 0

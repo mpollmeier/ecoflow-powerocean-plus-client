@@ -68,11 +68,12 @@ func TestLiveStatePrefersFreshSystemSample(t *testing.T) {
 	}
 }
 
-func TestLiveStatePrefersPackSOCOverFreshSystemSample(t *testing.T) {
+func TestLiveStatePrefersSystemSOCOverPackAverage(t *testing.T) {
 	state := newLiveState("R371TEST", func(Report) {})
-	state.ingestSystem(reportFromESR(&pb.EnergyStreamReport{BpSoc: 10, BpPwr: -300}, time.Now()), time.Now())
+	state.ingestSystem(reportFromESR(&pb.EnergyStreamReport{BpSoc: 31, BpPwr: -300}, time.Now()), time.Now())
 	state.ingestPacks([]*pb.BpStaReport{
-		{BpSn: []byte("packA"), BpSoc: proto.Uint32(5), BpRealSoc: proto.Float32(5), BpFullCap: proto.Uint32(97000)},
+		{BpSn: []byte("packA"), BpSoc: proto.Uint32(35), BpRealSoc: proto.Float32(35), BpFullCap: proto.Uint32(97000)},
+		{BpSn: []byte("packB"), BpSoc: proto.Uint32(33), BpRealSoc: proto.Float32(33), BpFullCap: proto.Uint32(97000)},
 	})
 
 	r, ok := state.snapshot()
@@ -85,11 +86,11 @@ func TestLiveStatePrefersPackSOCOverFreshSystemSample(t *testing.T) {
 	if r.BatteryW != -300 {
 		t.Errorf("battery: got %v, want -300 (system sample)", r.BatteryW)
 	}
-	if !r.HasSOC || r.BatterySOC != 5 {
-		t.Errorf("soc: got %d (has=%v), want 5 (pack heartbeat)", r.BatterySOC, r.HasSOC)
+	if !r.HasSOC || r.BatterySOC != 31 {
+		t.Errorf("soc: got %d (has=%v), want 31 (system BMS estimate)", r.BatterySOC, r.HasSOC)
 	}
-	if len(r.Packs) != 1 {
-		t.Errorf("packs: got %d, want 1", len(r.Packs))
+	if len(r.Packs) != 2 {
+		t.Errorf("packs: got %d, want 2", len(r.Packs))
 	}
 }
 
